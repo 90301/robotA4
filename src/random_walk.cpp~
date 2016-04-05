@@ -238,7 +238,7 @@ class RandomWalk {
           break;
 
         case FSM_MOVE_FORWARD:
-          move(FORWARD_SPEED_MPS, 0);
+          move(moveStraight, 0);
           break;
       }
 
@@ -258,6 +258,47 @@ class RandomWalk {
       count++;
     }
   };
+
+  void translate(double d){
+    ros::Rate rate(10);
+    ros::Time startTime = ros::Time::now();
+    double dur = moveStraight(d);
+    ros::Duration runTime = ros::Duration(dur);
+
+    while(ros.ok() && startTime + runTime > ros::Time::now()){
+      move(FORWARD_SPEED_MPS, 0);
+      ros::spinOnce();
+      rate.sleep();
+    }
+  }
+
+  void rotate_rel(double angle){
+    ros::Rate rate(10);
+    ros::Time startTime = ros::Time::now();
+    double dur = rotateRads(angle);
+    ros::Duration runTime = ros::Duration(dur);
+
+    while(ros.ok() && startTime + runTime > ros::Time::now()){
+      move(0, ROTATE_SPEED_RADPS);
+      ros::spinOnce();
+      rate.sleep();
+    }
+  }
+
+  void rotate_rel(double angle){
+    ros::Rate rate(10);
+    ros::Time startTime = ros::Time::now();
+    double dur = rotateAbsRads(angle);
+    ros::Duration runTime = ros::Duration(dur);
+
+    while(ros.ok() && startTime + runTime > ros::Time::now()){
+      move(0, ROTATE_SPEED_RADPS);
+      ros::spinOnce();
+      rate.sleep();
+    }
+  }
+
+
   enum FSM { FSM_MOVE_FORWARD, FSM_ROTATE, FSM_STOP };
 
   // Tunable parameters
@@ -298,6 +339,9 @@ int main(int argc, char** argv) {
   std::cout << "MAIN" << std::endl;
   ros::NodeHandle n;
   RandomWalk walker(n);  // Create new random walk object
-  walker.spin();         // Execute FSM loop
+  //walker.spin();         // Execute FSM loop
+
+  
+
   return 0;
 };

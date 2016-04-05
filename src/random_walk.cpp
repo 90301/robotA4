@@ -262,7 +262,7 @@ class RandomWalk {
   void translate(double d){
     ros::Rate rate(10);
     ros::Time startTime = ros::Time::now();
-    double dur = 1 / FORWARD_SPEED_MPS;
+    double dur = moveStraight(d);
     ros::Duration runTime = ros::Duration(dur);
 
     while(ros.ok() && startTime + runTime > ros::Time::now()){
@@ -271,6 +271,33 @@ class RandomWalk {
       rate.sleep();
     }
   }
+
+  void rotate_rel(double angle){
+    ros::Rate rate(10);
+    ros::Time startTime = ros::Time::now();
+    double dur = rotateRads(angle);
+    ros::Duration runTime = ros::Duration(dur);
+
+    while(ros.ok() && startTime + runTime > ros::Time::now()){
+      move(0, ROTATE_SPEED_RADPS);
+      ros::spinOnce();
+      rate.sleep();
+    }
+  }
+
+  void rotate_rel(double angle){
+    ros::Rate rate(10);
+    ros::Time startTime = ros::Time::now();
+    double dur = rotateAbsRads(angle);
+    ros::Duration runTime = ros::Duration(dur);
+
+    while(ros.ok() && startTime + runTime > ros::Time::now()){
+      move(0, ROTATE_SPEED_RADPS);
+      ros::spinOnce();
+      rate.sleep();
+    }
+  }
+
 
   enum FSM { FSM_MOVE_FORWARD, FSM_ROTATE, FSM_STOP };
 
@@ -314,7 +341,7 @@ int main(int argc, char** argv) {
   RandomWalk walker(n);  // Create new random walk object
   //walker.spin();         // Execute FSM loop
 
-  
+  walker.rotate_rel(M_PI / 2.0);
 
   return 0;
 };
