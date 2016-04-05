@@ -1,0 +1,188 @@
+/*
+    Taken from team 7 and modified by including some improvements
+    from ClearpathTurtleRndmWalk.cpp
+    
+    TODO: ROS parameters instead of just constants
+*/
+
+#include "ros/ros.h"
+#include "geometry_msgs/Twist.h"
+#include "geometry_msgs/Point32.h"
+#include "sensor_msgs/LaserScan.h"
+#include <pcl_ros/point_cloud.h>
+#include <cstdlib> // Needed for rand()
+#include <ctime> // Needed to seed random number generator with a time value
+#include <math.h>
+
+// Slowest permissible is 10Hz
+#define MAX_RUNTIME_SECONDS 0.f
+
+class RandomWalk 
+{
+    public:
+        // Constructor
+        RandomWalk(ros::NodeHandle& nh, double lin_speed, double ang_speed, double stop_distance, std::string velocity_topic) :
+            fsm(FSM_MOVE_FORWARD),
+            FORWARD_SPEED_MPS(lin_speed),
+	    ROTATE_SPEED_RADPS(ang_speed),
+            PROXIMITY_RANGE_M(stop_distance),
+            rotateStartTime(ros::Time::now()),
+            rotateDuration(MAX_RUNTIME_SECONDS) 
+        {
+            srand(time(NULL));
+            commandPub = nh.advertise<geometry_msgs::Twist>(velocity_topic, 1); 
+            
+            laserSub = nh.subscribe("scan", 1, &RandomWalk::commandCallback, this);
+            cloudSub = nh.subscribe("camera/depth_registered/points", 1, &RandomWalk::pointCloudCallback, this);
+        };
+        
+        // Velocity commands
+        void move(double linearVelMPS, double angularVelRadPS) 
+        {
+            geometry_msgs::Twist msg; // The default constructor will set all commands to 0
+            msg.linear.x = linearVelMPS;
+            msg.angular.z = angularVelRadPS;
+            commandPub.publish(msg);
+        };
+
+        void pointCloudCallback( const pcl::PointCloud<pcl::PointXYZ>& cloud ) 
+        {
+            float minz = 9999;
+            float maxz = -9999;
+            float currentPoint, average;
+            int count =0;
+
+            for(int i =0; i <= 639; i++)
+            {
+                currentPoint = cloud.points[640*420+i].z;
+                if(!isnan(currentPoint)) 
+                {
+                    average+= currentPoint;
+                    count++;
+                }
+                if(currentPoint > maxz) maxz = currentPoint;
+                if(currentPoint < minz) minz = currentPoint;
+            }
+
+            if (average/count > FLOOR_RANGE_M)
+            {
+                gFlag = 1;
+                ROS_INFO_STREAM("minZ = "<<minz<<" maxZ = "<<maxz<<" average = "<<(average/count));
+            }
+            else gFlag = 0;
+        }
+
+        void commandCallback(const sensor_msgs::LaserScan::ConstPtr& msg) 
+        {
+            if (fsm == FSM_MOVE_FORWARD) 
+            {
+ 		// Compute the average range value between MIN_SCAN_ANGLE and MAX_SCAN_ANGLE
+ 		// NOTE: ideally, the following loop should have additional checks to ensure
+ 		// that indices are not out of bounds, by computing:
+ 		//
+ 		// - currAngle = msg->angle_min + msg->angle_increment*currIndex
+ 		//
+ 		// and then ensuring that currAngle <= msg->angle_max
+                unsigned int minIndex = ceil((MIN_SCAN_ANGLE_RAD - msg->angle_min) / msg->angle_increment);
+                unsigned int maxIndex = ceil((MAX_SCAN_ANGLE_RAD - msg->angle_min) / msg->angle_increment);
+                float closestRange = msg->ranges[minIndex];
+                for (unsigned int currIndex = minIndex + 1; currIndex < maxIndex; currIndex++) 
+                {
+                    if (msg->ranges[currIndex] < closestRange) 
+                    {
+                        closestRange = msg->ranges[currIndex];
+                    }
+                }
+                if (isnan(closestRange)) 
+                    closestRange = 10; // TODO parameter
+
+                if (closestRange > PROXIMITY_RANGE_M && !gFlag)
+                {   
+                    fsm = FSM_MOVE_FORWARD;
+                }
+                else
+                {
+                    fsm = FSM_ROTATE;
+                    rotateStartTime = ros::Time::now();				
+                    rotateDuration = ros::Duration(rand() % 5); // TODO MAX DURATION OF ROTATION according to velocity
+                }			
+            }
+        };
+
+        void spin() 
+        {
+            ros::Rate rate(10); // Specify the FSM loop rate in Hz
+            while (ros::ok()) { // Keep spinning loop until user presses Ctrl+C
+
+                if (fsm == FSM_MOVE_FORWARD)
+                    move(FORWARD_SPEED_MPS, 0); // Move forward
+                else
+                {
+                    // Rotation direction
+                    int rot_dir = 0;
+                    if (rand()%2)
+                        rot_dir = 1;
+                    else 
+                        rot_dir = -1;
+
+                    while ((ros::Time::now() - rotateStartTime) < rotateDuration)
+                    {	
+                        move(0.0, ROTATE_SPEED_RADPS * rot_dir);
+                    }
+                    move(0.0, 0.0); // Stop after rotating
+                    fsm = FSM_MOVE_FORWARD;
+                }
+
+
+                ros::spinOnce(); // Need to call this function often to allow ROS to process incoming messages
+                rate.sleep(); // Sleep for the rest of the cycle, to enforce the FSM loop rate
+            }
+        }; 
+        
+        // Type of movements
+        enum FSM {
+            FSM_MOVE_FORWARD, 
+            FSM_ROTATE
+        };
+
+
+        const static double MIN_SCAN_ANGLE_RAD = -20.0 / 180 * M_PI;
+        const static double MAX_SCAN_ANGLE_RAD = +20.0 / 180 * M_PI;
+        
+        const static float FLOOR_RANGE_M = 1.2;
+
+        // Parameters        
+        double FORWARD_SPEED_MPS;
+        double PROXIMITY_RANGE_M;
+        double ROTATE_SPEED_RADPS;
+
+        int gFlag;
+    protected:
+        // Velocity publisher TODO check if velocity_smooth exists
+        ros::Publisher commandPub;
+        // Subscriber to sensor readings
+        ros::Subscriber laserSub;
+        ros::Subscriber cloudSub;
+        enum FSM fsm;
+        ros::Time rotateStartTime;
+        ros::Duration rotateDuration;
+};
+int main(int argc, char **argv) 
+{
+    // ROS Param Variables
+    double lin_speed, ang_speed;
+    double stop_distance;
+    std::string velocity_topic;
+
+    ros::init(argc, argv, "random_walk");
+    ros::NodeHandle n;
+    ros::NodeHandle node_handle_private = ros::NodeHandle("~");
+    node_handle_private.param<double>("lin_speed", lin_speed, 0.3);
+    node_handle_private.param<double>("ang_speed", ang_speed, 0.75);
+    node_handle_private.param<double>("stop_distance", stop_distance, 0.85);
+    node_handle_private.param<std::string>("velocity_topic", velocity_topic, "/cmd_vel_mux/input/navi"); 
+    ROS_INFO("Parameters %s, %f, %f, %f", velocity_topic.c_str(), lin_speed, ang_speed, stop_distance);
+    RandomWalk walker(n, lin_speed, ang_speed, stop_distance, velocity_topic);
+    walker.spin();
+    return 0;
+};
